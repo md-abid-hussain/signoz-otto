@@ -11,6 +11,9 @@ docs say Grafana dashboards must be *"recreated by hand,"* there's no readiness 
 commit, defining a good SLO takes weeks of study, and self-hosted users have no AI teammate. Otto
 is that missing 20%.
 
+<!-- TODO(image): hero shot — the Overview page with the live service map + connection panel -->
+![Otto — Overview](docs/screenshots/overview.png)
+
 ## Surfaces (each its own page)
 
 | Page | What it does |
@@ -22,6 +25,20 @@ is that missing 20%.
 | **AgentOtto 🕵️** | A conversational teammate with the full SigNoz MCP toolset + skills; multi-turn memory; every write behind an approval card. |
 | **Run history** | Every applied migration/SLO as a scored receipt. |
 | **Otto Ops** | Self-observability — Otto's own OpenTelemetry (traces + metrics + frontend RUM) in the same SigNoz. |
+
+### In action
+
+<!-- TODO(image): Migrate page mid-run — live-streamed stages + the per-panel fidelity result -->
+**Grafana → SigNoz migration, live-streamed**
+![Otto — dashboard migration](docs/screenshots/migrate.png)
+
+<!-- TODO(image): AgentOtto with the Approve / Reject card visible on a create_dashboard / create_alert -->
+**AgentOtto — every write behind an approval gate**
+![Otto — AgentOtto approval gate](docs/screenshots/agentotto.png)
+
+<!-- TODO(image): SigNoz services list showing `otto` + `otto-web`, or the otto.run → llm.call trace -->
+**The tool observing itself — `otto` + `otto-web` in the same SigNoz**
+![Otto — self-observability](docs/screenshots/self-observability.png)
 
 ## How SigNoz is used (core to the project)
 
@@ -82,7 +99,6 @@ cd backend && npx vitest run     # 27 tests (mapper, grafana parser, readiness)
 ```
 
 ## Docs
-- [`SUBMISSION-READINESS.md`](SUBMISSION-READINESS.md) — what's done, what to double-check, what's left.
 - [`v2/`](v2/) — product, design, tech, runbook, and flow notes (grounded in manual verification runs).
 - [`signoz-skill/`](signoz-skill/) — the SigNoz agent skills the agent draws on.
 
