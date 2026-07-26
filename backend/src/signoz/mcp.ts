@@ -25,6 +25,12 @@ export interface SigNozMcp {
   /** invoke a tool by its base name (e.g. "list_metrics") and JSON-parse the result */
   call<T = unknown>(baseName: string, args: Record<string, unknown>): Promise<T>;
   toolNames: string[];
+  /** MCP resources — the canonical signoz://… docs (dashboard/alert/promql instructions & examples) */
+  listResources: () => Promise<unknown>;
+  readResource: (uri: string) => Promise<unknown>;
+  /** MCP prompts (if the server serves any) */
+  listPrompts: () => Promise<unknown>;
+  getPrompt: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
   close: () => Promise<void>;
 }
 
@@ -87,5 +93,12 @@ export async function connectSigNoz(opts?: { url?: string; apiKey?: string }): P
     return payload as T;
   });
 
-  return { raw, read, write, call, toolNames: raw.map((t) => t.name), close: () => client.close() };
+  const SERVER = 'signoz';
+  const listResources = () => client.listResources(SERVER);
+  const readResource = (uri: string) => client.readResource(SERVER, uri);
+  const getPromptClient = async () => (await client.getClient(SERVER)) as { listPrompts?: () => Promise<unknown>; getPrompt?: (a: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown> } | undefined;
+  const listPrompts = async () => { const c = await getPromptClient(); return c?.listPrompts ? c.listPrompts() : { prompts: [] }; };
+  const getPrompt = async (name: string, args?: Record<string, unknown>) => { const c = await getPromptClient(); return c?.getPrompt ? c.getPrompt({ name, arguments: args }) : { error: 'prompts not supported' }; };
+
+  return { raw, read, write, call, toolNames: raw.map((t) => t.name), listResources, readResource, listPrompts, getPrompt, close: () => client.close() };
 }

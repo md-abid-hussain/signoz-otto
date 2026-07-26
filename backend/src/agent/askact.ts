@@ -5,12 +5,43 @@
 import { createDeepAgent, listSkills } from 'deepagents';
 import { MemorySaver } from '@langchain/langgraph';
 import { ChatOpenAI } from '@langchain/openai';
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import type { SigNozMcp } from '../signoz/mcp.js';
 
 /** minimal skill shape we use (deepagents ships two conflicting SkillMetadata types) */
 interface SkillInfo { name: string; description: string; path: string }
+
+/** MCP has three component types; LLM agents can only call tools, so resources and prompts are
+ * bridged 1:1 here. Nothing is hand-written about SigNoz itself — the agent reads the server's own
+ * canonical docs at runtime. (Tools need no bridge: all of them are passed through as-is.) */
+function mcpSurfaceTools(mcp: SigNozMcp) {
+  const clip = (v: unknown, n: number) => JSON.stringify(v).slice(0, n);
+  return [
+    tool(async () => clip(await mcp.listResources(), 8000), {
+      name: 'signoz_list_resources',
+      description: 'List every SigNoz MCP resource (canonical signoz://… docs: schemas, instructions, examples). Call this FIRST to discover the exact URIs available on this server, then read the relevant one.',
+      schema: z.object({}),
+    }),
+    tool(async ({ uri }) => clip(await mcp.readResource(uri), 24000), {
+      name: 'signoz_read_resource',
+      description: 'Read a SigNoz MCP resource by its exact URI (get URIs from signoz_list_resources). This is the source of truth for payload schemas and examples.',
+      schema: z.object({ uri: z.string().describe('exact resource URI from signoz_list_resources') }),
+    }),
+    tool(async () => clip(await mcp.listPrompts(), 4000), {
+      name: 'signoz_list_prompts',
+      description: 'List SigNoz MCP prompts, if the server serves any.',
+      schema: z.object({}),
+    }),
+    tool(async ({ name }) => clip(await mcp.getPrompt(name), 8000), {
+      name: 'signoz_get_prompt',
+      description: 'Get a SigNoz MCP prompt by name.',
+      schema: z.object({ name: z.string() }),
+    }),
+  ];
+}
 
 /** repo-root/signoz-skill — the 13 SigNoz agent skills the teammate follows */
 function skillsDir(): string {
@@ -33,16 +64,16 @@ Operating rules (from the SigNoz skills — follow them):
 - NEVER CLAIM ROOT CAUSE. Report observations with timestamps and values ("error rate rose from 0.2% to 4.1% at 14:05"), not causation.
 - One focused query per question. Use parallel discovery, precise execution. Present no-data honestly (healthy-zero vs out-of-range vs missing instrumentation).
 
-ACTIONS (writes: create/update/delete dashboards, alerts, channels): when the user asks you to create or change something and you have the required details, CALL the write tool directly — the platform AUTOMATICALLY pauses every write and shows it to the user for approval before it executes, so you do NOT need to ask "reply approve" in text. Discover the real values first (services, metrics, fields) so the proposed write is correct. If a required detail is genuinely missing and undiscoverable, ask for just that. Never invent metric/service names.
+ACTIONS (writes: create/update/delete dashboards, alerts, channels): when the user asks you to create or change something — DISCOVER the real values (services, operations, metrics, fields), READ the canonical schema from the MCP resource, author the payload, and CALL the write tool. The platform AUTOMATICALLY pauses every write for the user's approval before it executes, so do NOT ask "reply approve" in text, and NEVER refuse a write for lack of a schema — read the resource instead. Never invent metric/service names.
 
-create_alert gotchas (the tool's validator is stricter than the docs — get these right or it rejects the write):
-- schemaVersion:"v2alpha1", version:"v5", ruleType:"threshold_rule".
-- \`evaluation\` is TOP-LEVEL (sibling of condition), e.g. {kind:"rolling",spec:{evalWindow:"5m",frequency:"1m"}} — NOT inside condition.
-- every thresholds.spec[] REQUIRES \`recoveryTarget\` (use null if no hysteresis) plus name/op/matchType/target.
-- do NOT put \`order\` or \`limit\` on builder_query/builder_formula specs (they draw a 400).
-- error-rate = two builder_query (A=errors filter has_error=true, B=total) both disabled:true + a builder_formula F1 "(A/B)*100"; selectedQueryName:"F1"; unit:"percent"; put the channel in thresholds.spec[].channels.
-- a builder_query spec has: name, signal, stepInterval:60, aggregations, filter, disabled. A builder_formula spec has ONLY: name, expression, legend?, disabled? — NO stepInterval, NO aggregations, NO filter on the formula.
-- op words: above/below/equal; matchType: at_least_once/all_the_times/on_average.
+Get schemas from the server, never from memory. Before authoring any create/update payload:
+1. signoz_list_resources → see the exact resource URIs THIS server serves (do not assume a URI exists; some referenced in guides are absent).
+2. signoz_read_resource(uri) → the canonical schema + working examples. This is the source of truth.
+3. signoz_search_docs / signoz_fetch_doc → the official docs for anything else; signoz_list_dashboard_templates → real dashboard JSON you can model a new one on.
+
+Two validator quirks the examples omit (this transport is stricter than the raw API) — apply them on top of what you read:
+- create_alert: every thresholds.spec[] REQUIRES \`recoveryTarget\` (null if no hysteresis); a builder_formula spec takes NO \`order\`/\`limit\`/\`stepInterval\`.
+- create_alert: \`evaluation\` is TOP-LEVEL (sibling of condition), not nested inside it.
 
 Available SigNoz playbooks (invoke the matching approach when the task fits):
 ${catalog}
@@ -62,10 +93,13 @@ export function buildAskAct(mcp: SigNozMcp, opts: { readOnly?: boolean } = {}): 
   // gpt-5.6-terra rejects function tools unless reasoning_effort is 'none' on /v1/chat/completions
   const model = new ChatOpenAI({ model: process.env.LLM_MODEL ?? 'gpt-5.6-terra', apiKey: process.env.OPENAI_API_KEY, modelKwargs: { reasoning_effort: 'none' } });
 
-  // read tools always; write tools included unless readOnly, and always human-gated via interruptOn
-  const writeTools = Object.values(mcp.write);
-  const writeToolNames = writeTools.map((t) => t.name);
-  const tools = opts.readOnly ? Object.values(mcp.read) : [...Object.values(mcp.read), ...writeTools];
+  // THE COMPLETE MCP SURFACE: every tool the server exposes (not a curated subset — that's what
+  // starved the agent of signoz_search_docs / fetch_doc / list_dashboard_templates), plus resources
+  // and prompts bridged as tools. The engine keeps its own curated read/write maps; the agent gets everything.
+  const isWrite = (n: string) => /(^|_)(create|update|delete|import)_/.test(n);
+  const allTools = mcp.raw;
+  const writeToolNames = allTools.map((t) => t.name).filter(isWrite);
+  const tools = [...(opts.readOnly ? allTools.filter((t) => !isWrite(t.name)) : allTools), ...mcpSurfaceTools(mcp)];
   const interruptOn: Record<string, boolean> = {};
   if (!opts.readOnly) for (const n of writeToolNames) interruptOn[n] = true; // pause before every write
 
