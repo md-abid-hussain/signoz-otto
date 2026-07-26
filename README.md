@@ -1,17 +1,12 @@
 # Otto — a self-hosted agentic copilot for SigNoz
 
-> **Agents of SigNoz** hackathon · Track 02 (Signals & Dashboards). Otto does the expert-judgment
-> work SigNoz leaves to you — auditing your telemetry, migrating your Grafana dashboards, defining
-> SLOs, and investigating day-to-day — all through one agent, over the live SigNoz MCP, with a
-> human approval gate on every write. And the tool that manages your observability is itself fully
-> observable in the same SigNoz.
+> Otto does the expert-judgment work that observability platforms leave to you — auditing your telemetry, migrating your Grafana dashboards, defining SLOs, and investigating day-to-day issues. Everything happens through one AI agent communicating over the live SigNoz MCP, with a strict human-approval gate on every write. To prove the architecture, Otto is itself fully observable in the same SigNoz instance.
 
 SigNoz gets teams 80% of the way to great observability and leaves the hardest 20% manual: its own
 docs say Grafana dashboards must be *"recreated by hand,"* there's no readiness check before you
 commit, defining a good SLO takes weeks of study, and self-hosted users have no AI teammate. Otto
 is that missing 20%.
 
-<!-- TODO(image): hero shot — the Overview page with the live service map + connection panel -->
 ![Otto — Overview](docs/screenshots/overview.png)
 
 ## Surfaces (each its own page)
@@ -28,15 +23,12 @@ is that missing 20%.
 
 ### In action
 
-<!-- TODO(image): Migrate page mid-run — live-streamed stages + the per-panel fidelity result -->
 **Grafana → SigNoz migration, live-streamed**
 ![Otto — dashboard migration](docs/screenshots/migrate.png)
 
-<!-- TODO(image): AgentOtto with the Approve / Reject card visible on a create_dashboard / create_alert -->
 **AgentOtto — every write behind an approval gate**
 ![Otto — AgentOtto approval gate](docs/screenshots/agentotto.png)
 
-<!-- TODO(image): SigNoz services list showing `otto` + `otto-web`, or the otto.run → llm.call trace -->
 **The tool observing itself — `otto` + `otto-web` in the same SigNoz**
 ![Otto — self-observability](docs/screenshots/self-observability.png)
 
@@ -93,15 +85,7 @@ open http://localhost:5273
 The app reaches your SigNoz over `host.docker.internal` by default; override the endpoints in `.env`.
 If you don't already run the SigNoz MCP server, uncomment the `signoz-mcp` sidecar in `docker-compose.yml`.
 
-## Tests
-```bash
-cd backend && npx vitest run     # 27 tests (mapper, grafana parser, readiness)
-```
 
-## Docs
-- [`v2/`](v2/) — product, design, tech, runbook, and flow notes (grounded in manual verification runs).
-- [`signoz-skill/`](signoz-skill/) — the SigNoz agent skills the agent draws on.
 
-## Security
-Bring your own SigNoz API key + LLM key via `.env` (gitignored, never committed). Only metadata
-(metric names, query shapes, aggregate stats) is ever sent to the LLM — never raw log bodies or data values.
+## Acknowledgements
+All telemetry data (traces, metrics, and logs) shown in the screenshots and used for testing this project was generated using the official [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo).
