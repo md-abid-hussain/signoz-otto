@@ -71,34 +71,46 @@ function yUnit(grafanaUnit: string | undefined, usesDurationNano: boolean): stri
 const hasDurationNano = (aggs: { expression?: string }[]): boolean =>
   aggs.some((a) => (a.expression ?? '').includes('duration_nano'));
 
+/** A Value panel renders ONE number — a grouped/multi-series query makes it show NaN. "Top-N by
+ * category" (e.g. a Grafana gauge with topk(...) by span_name) is a Bar panel in SigNoz. (Verified:
+ * the migrated gauge+topk latency panel rendered "NaN" as a value panel.) */
+function panelTypeFor(base: string, hasGroupBy: boolean): string {
+  return base === 'value' && hasGroupBy ? 'bar' : base;
+}
+
 function widgetFromDeterministic(panel: PanelSpec, r: NonNullable<PanelMigration['targets'][number]['resolved']>): Record<string, unknown> {
+  const pt = panelTypeFor(PANEL_TYPE[panel.grafanaType] ?? 'graph', r.groupBy.length > 0);
   const data: Record<string, unknown> = {
     queryName: 'A', expression: 'A', dataSource: 'metrics', stepInterval: 60,
     aggregations: [{ metricName: r.metricName, timeAggregation: r.timeAggregation, spaceAggregation: r.spaceAggregation }],
     groupBy: r.groupBy.map((g) => ({ key: g.name, dataType: 'string', type: ctxToType(g.context) })),
     legend: r.legend ?? (r.groupBy.length ? `{{${r.groupBy[0]!.name}}}` : ''),
     orderBy: [], selectColumns: [], functions: [], disabled: false,
+    ...(pt === 'value' ? { reduceTo: 'avg' } : {}), // a value panel needs a reduction or it renders NaN
     ...(r.filterExpr ? { filter: { expression: r.filterExpr } } : {}),
     ...(r.limit ? { limit: r.limit } : {}),
   };
-  return wrapWidget(panel.id, panel.title, PANEL_TYPE[panel.grafanaType] ?? 'graph', [data], [], yUnit(panel.unit, false));
+  return wrapWidget(panel.id, panel.title, pt, [data], [], yUnit(panel.unit, false));
 }
 
 function widgetFromAgent(panel: PanelSpec, a: AgentResult): Record<string, unknown> {
   const usesDur = a.queries.some((q) => hasDurationNano(q.aggregations));
+  const hasGroupBy = a.queries.some((q) => (q.groupBy?.length ?? 0) > 0);
+  const pt = panelTypeFor(a.panelType ?? PANEL_TYPE[panel.grafanaType] ?? 'graph', hasGroupBy);
   const queryData = a.queries.map((q: AgentQuery) => ({
     queryName: q.name, expression: q.name, dataSource: q.signal, stepInterval: 60,
     aggregations: q.aggregations,
     groupBy: (q.groupBy ?? []).map((g) => ({ key: g.name, dataType: 'string', type: ctxToType(g.fieldContext) })),
     legend: (q.groupBy?.length ? q.groupBy.map((g) => `{{${g.name}}}`).join(' - ') : q.legend) ?? '',
     orderBy: [], selectColumns: [], functions: [], disabled: q.disabled ?? false,
+    ...(pt === 'value' ? { reduceTo: 'avg' } : {}),
     ...(q.filter ? { filter: q.filter } : {}),
     ...(q.limit ? { limit: q.limit } : {}),
   }));
   const formulas = a.formula
     ? [{ queryName: a.formula.name, expression: a.formula.expression, disabled: false, dataSource: 'metrics', stepInterval: 60, aggregations: [], groupBy: [], orderBy: [], selectColumns: [], functions: [], limit: 0 }]
     : [];
-  return wrapWidget(panel.id, panel.title, a.panelType ?? PANEL_TYPE[panel.grafanaType] ?? 'graph', queryData, formulas, yUnit(panel.unit, usesDur));
+  return wrapWidget(panel.id, panel.title, pt, queryData, formulas, yUnit(panel.unit, usesDur));
 }
 
 function wrapWidget(panelId: string, title: string, panelTypes: string, queryData: unknown[], queryFormulas: unknown[], yAxisUnit = 'none'): Record<string, unknown> {
