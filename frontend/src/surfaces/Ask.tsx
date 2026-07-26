@@ -69,9 +69,10 @@ export function Ask() {
           {msgs.length > 0 && (
             <button onClick={resetChat} className="mono rounded-lg border border-[var(--color-line-2)] px-3 py-1.5 text-[11px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-cyan)] hover:text-[var(--color-fg)]">+ new chat</button>
           )}
-          <div className="flex items-center gap-2">
+          <Badge color="var(--color-warn)">writes&nbsp;gated</Badge>
+          <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Dot color="var(--color-phosphor)" pulse />
-            <span className="mono text-[11px] text-[var(--color-fg-faint)]">{skills != null ? `${skills} skills loaded` : 'read-only'}</span>
+            <span className="mono text-[11px] text-[var(--color-fg-faint)]">{skills != null ? `${skills} skills · live` : 'full access · live'}</span>
           </div>
         </div>
       </div>

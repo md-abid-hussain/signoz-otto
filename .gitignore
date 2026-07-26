@@ -20,3 +20,11 @@ Thumbs.db
 # editor
 .vscode/
 .idea/
+
+# working docs — kept locally, not published to the repo
+blog.md
+HANDOFF.md
+SUBMISSION-READINESS.md
+
+# stray scratch dumps from agent/migration testing
+._*.json
