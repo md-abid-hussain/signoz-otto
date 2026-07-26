@@ -2,6 +2,9 @@
 
 > Otto does the expert-judgment work that observability platforms leave to you — auditing your telemetry, migrating your Grafana dashboards, defining SLOs, and investigating day-to-day issues. Everything happens through one AI agent communicating over the live SigNoz MCP, with a strict human-approval gate on every write. To prove the architecture, Otto is itself fully observable in the same SigNoz instance.
 
+📺 **[Watch the 3-minute Demo Video](https://www.youtube.com/watch?v=mm9d9IH9WBI)**  
+📖 **[Read the Architecture Blog](https://medium.com/@Abid_/i-built-a-grafana-migration-and-slo-copilot-for-signoz-heres-what-i-learned-about-its-mcp-server-d4755fa0b10b)**
+
 SigNoz gets teams 80% of the way to great observability and leaves the hardest 20% manual: its own
 docs say Grafana dashboards must be *"recreated by hand,"* there's no readiness check before you
 commit, defining a good SLO takes weeks of study, and self-hosted users have no AI teammate. Otto
