@@ -9,10 +9,27 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { SigNozMcp } from '../signoz/mcp.js';
 
 /** minimal skill shape we use (deepagents ships two conflicting SkillMetadata types) */
 interface SkillInfo { name: string; description: string; path: string }
+
+/** MCP tool errors THROW, which kills the whole turn — the model never sees the failure and can't
+ * fix it. Return them as observations instead so the agent can read the validation message, correct
+ * the payload, and retry (the standard tool-error → observation pattern). Generic: no SigNoz knowledge. */
+function faultTolerant(t: StructuredToolInterface): StructuredToolInterface {
+  return tool(
+    async (input: unknown) => {
+      try {
+        return await t.invoke(input as never);
+      } catch (e) {
+        return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nRead this error, correct the payload, and call the tool again. Do not give up after one failure.`;
+      }
+    },
+    { name: t.name, description: t.description, schema: t.schema as never },
+  ) as unknown as StructuredToolInterface;
+}
 
 /** MCP has three component types; LLM agents can only call tools, so resources and prompts are
  * bridged 1:1 here. Nothing is hand-written about SigNoz itself — the agent reads the server's own
@@ -71,6 +88,8 @@ Get schemas from the server, never from memory. Before authoring any create/upda
 2. signoz_read_resource(uri) → the canonical schema + working examples. This is the source of truth.
 3. signoz_search_docs / signoz_fetch_doc → the official docs for anything else; signoz_list_dashboard_templates → real dashboard JSON you can model a new one on.
 
+SELF-CORRECT ON FAILURE. A tool result starting with TOOL_ERROR is a recoverable failure, not a dead end. Read the message — it usually names the exact field and the allowed values (e.g. sort must be ASC/DESC, not "asc") — fix that field and call the tool again. Try up to 3 corrections, consulting signoz_read_resource if the fix isn't obvious, before telling the user you're stuck. Never report a validation error and stop.
+
 Two validator quirks the examples omit (this transport is stricter than the raw API) — apply them on top of what you read:
 - create_alert: every thresholds.spec[] REQUIRES \`recoveryTarget\` (null if no hysteresis); a builder_formula spec takes NO \`order\`/\`limit\`/\`stepInterval\`.
 - create_alert: \`evaluation\` is TOP-LEVEL (sibling of condition), not nested inside it.
@@ -97,7 +116,7 @@ export function buildAskAct(mcp: SigNozMcp, opts: { readOnly?: boolean } = {}): 
   // starved the agent of signoz_search_docs / fetch_doc / list_dashboard_templates), plus resources
   // and prompts bridged as tools. The engine keeps its own curated read/write maps; the agent gets everything.
   const isWrite = (n: string) => /(^|_)(create|update|delete|import)_/.test(n);
-  const allTools = mcp.raw;
+  const allTools = mcp.raw.map(faultTolerant); // failures come back as observations, not thrown
   const writeToolNames = allTools.map((t) => t.name).filter(isWrite);
   const tools = [...(opts.readOnly ? allTools.filter((t) => !isWrite(t.name)) : allTools), ...mcpSurfaceTools(mcp)];
   const interruptOn: Record<string, boolean> = {};
