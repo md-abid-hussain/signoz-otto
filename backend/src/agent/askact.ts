@@ -15,34 +15,6 @@ import type { SigNozMcp } from '../signoz/mcp.js';
 /** minimal skill shape we use (deepagents ships two conflicting SkillMetadata types) */
 interface SkillInfo { name: string; description: string; path: string }
 
-/** READ tools: keep the real schema (guides the LLM), just turn errors into observations so a failure
- * doesn't kill the turn. */
-function faultTolerant(t: StructuredToolInterface): StructuredToolInterface {
-  return tool(
-    async (input: unknown) => {
-      try { return await t.invoke(input as never); }
-      catch (e) { return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nRead the error, correct it, and call again. Do not give up after one failure.`; }
-    },
-    { name: t.name, description: t.description, schema: t.schema as never },
-  ) as unknown as StructuredToolInterface;
-}
-
-/** WRITE tools: the adapter's client-side zod re-validates and THROWS before we can act — and it is
- * both detail-free AND stricter than the server (it rejects round-tripped objects with server-managed
- * fields like nested query ids). So make the client schema permissive and let the SERVER be the sole,
- * authoritative validator: it returns a detailed, actionable error the agent can fix, or accepts a
- * payload the over-strict client would have blocked. The agent gets the real shape from the tool's
- * description + the MCP resource it's told to read — server-driven, not baked. Still interrupt-gated. */
-function serverValidatedWrite(mcp: SigNozMcp, t: StructuredToolInterface): StructuredToolInterface {
-  return tool(
-    async (input: unknown) => {
-      try { return await mcp.callRaw(t.name, (input ?? {}) as Record<string, unknown>); }
-      catch (e) { return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nThe server named the exact problem above — fix that field (re-read the schema resource if needed) and call again. Do not give up after one failure.`; }
-    },
-    { name: t.name, description: t.description, schema: z.object({}).passthrough() as never },
-  ) as unknown as StructuredToolInterface;
-}
-
 /** MCP has three component types; LLM agents can only call tools, so resources and prompts are
  * bridged 1:1 here. Nothing is hand-written about SigNoz itself — the agent reads the server's own
  * canonical docs at runtime. (Tools need no bridge: all of them are passed through as-is.) */
@@ -102,7 +74,7 @@ Get schemas from the server, never from memory. Before authoring any create/upda
 2. signoz_read_resource(uri) → the canonical schema + working examples. This is the source of truth.
 3. signoz_search_docs / signoz_fetch_doc → the official docs for anything else; signoz_list_dashboard_templates → real dashboard JSON you can model a new one on.
 
-SELF-CORRECT ON FAILURE. A tool result starting with TOOL_ERROR is a recoverable failure, not a dead end. Read the message — validation errors name the offending field and its allowed values — fix exactly that and call the tool again. If the message is vague, re-read the relevant MCP resource and compare your payload to its example field by field. Try up to 3 corrections before telling the user you are stuck. Never report a validation error and stop.
+SELF-CORRECT ON FAILURE. A tool result starting with TOOL_ERROR is a recoverable failure, not a dead end. Read the message — validation errors name the offending field and its allowed values — and your VERY NEXT action must be the corrected tool call. Do NOT write a message like "I'll recreate it with that fixed" and stop — that ends your turn and nothing happens; instead emit the corrected tool call immediately in the same turn. If the message is vague, re-read the relevant MCP resource, compare your payload to its example field by field, then emit the corrected call. Keep retrying (up to ~5 corrections) until it succeeds or you have a concrete blocker to report. Never report a validation error and stop.
 
 Available SigNoz playbooks (invoke the matching approach when the task fits):
 ${catalog}
@@ -125,11 +97,12 @@ export function buildAskAct(mcp: SigNozMcp, opts: { readOnly?: boolean } = {}): 
   // THE COMPLETE MCP SURFACE: every tool the server exposes (not a curated subset — that's what
   // starved the agent of signoz_search_docs / fetch_doc / list_dashboard_templates), plus resources
   // and prompts bridged as tools. The engine keeps its own curated read/write maps; the agent gets everything.
+  // Give the agent the FULL MCP surface, every tool with its real schema. Writes are gated by
+  // interruptOn (below); read-only mode simply drops the write tools.
   const isWrite = (n: string) => /(^|_)(create|update|delete|import)_/.test(n);
-  const readTools = mcp.raw.filter((t) => !isWrite(t.name)).map(faultTolerant); // real schema, errors→observations
-  const writeTools = mcp.raw.filter((t) => isWrite(t.name)).map((t) => serverValidatedWrite(mcp, t)); // server-validated
-  const writeToolNames = writeTools.map((t) => t.name);
-  const tools = [...readTools, ...(opts.readOnly ? [] : writeTools), ...mcpSurfaceTools(mcp)];
+  const allTools = mcp.raw; // real schemas, plain — let the framework handle tool errors as observations
+  const writeToolNames = allTools.map((t) => t.name).filter(isWrite);
+  const tools = [...(opts.readOnly ? allTools.filter((t) => !isWrite(t.name)) : allTools), ...mcpSurfaceTools(mcp)];
   const interruptOn: Record<string, boolean> = {};
   if (!opts.readOnly) for (const n of writeToolNames) interruptOn[n] = true; // pause before every write
 
