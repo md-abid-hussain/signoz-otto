@@ -88,11 +88,7 @@ Get schemas from the server, never from memory. Before authoring any create/upda
 2. signoz_read_resource(uri) → the canonical schema + working examples. This is the source of truth.
 3. signoz_search_docs / signoz_fetch_doc → the official docs for anything else; signoz_list_dashboard_templates → real dashboard JSON you can model a new one on.
 
-SELF-CORRECT ON FAILURE. A tool result starting with TOOL_ERROR is a recoverable failure, not a dead end. Read the message — it usually names the exact field and the allowed values (e.g. sort must be ASC/DESC, not "asc") — fix that field and call the tool again. Try up to 3 corrections, consulting signoz_read_resource if the fix isn't obvious, before telling the user you're stuck. Never report a validation error and stop.
-
-Two validator quirks the examples omit (this transport is stricter than the raw API) — apply them on top of what you read:
-- create_alert: every thresholds.spec[] REQUIRES \`recoveryTarget\` (null if no hysteresis); a builder_formula spec takes NO \`order\`/\`limit\`/\`stepInterval\`.
-- create_alert: \`evaluation\` is TOP-LEVEL (sibling of condition), not nested inside it.
+SELF-CORRECT ON FAILURE. A tool result starting with TOOL_ERROR is a recoverable failure, not a dead end. Read the message — validation errors name the offending field and its allowed values — fix exactly that and call the tool again. If the message is vague, re-read the relevant MCP resource and compare your payload to its example field by field. Try up to 3 corrections before telling the user you are stuck. Never report a validation error and stop.
 
 Available SigNoz playbooks (invoke the matching approach when the task fits):
 ${catalog}
