@@ -287,7 +287,7 @@ app.post('/api/ask', async (req, reply) => {
   try {
     const { question, threadId, approve } = (req.body ?? {}) as { question?: string; threadId?: string; approve?: boolean };
     const { agent, skills } = await getAskAct();
-    const config = { configurable: { thread_id: threadId ?? 'default' }, recursionLimit: 60, callbacks: [ottoAgentTracer()] };
+    const config = { configurable: { thread_id: threadId ?? 'default' }, recursionLimit: 120, callbacks: [ottoAgentTracer()] };
     const getSnap = () => (agent as unknown as { getState: (c: unknown) => Promise<unknown> }).getState(config);
 
     let input: unknown;

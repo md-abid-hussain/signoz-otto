@@ -18,7 +18,7 @@ const { agent, skills, writeToolNames } = buildAskAct(mcp, { readOnly: !act });
 console.log(`\nOtto (Ask & Act) — ${skills.length} SigNoz skills loaded · ${act ? 'ACT (writes gated)' : 'ASK (read-only)'}\n`);
 console.log(`> ${question}\n`);
 
-const config = { configurable: { thread_id: `askact-${Date.now()}` }, recursionLimit: 40, callbacks: [ottoAgentTracer()] };
+const config = { configurable: { thread_id: `askact-${Date.now()}` }, recursionLimit: 120, callbacks: [ottoAgentTracer()] };
 const input = { messages: [{ role: 'user', content: question }] };
 
 const lastText = (state: unknown): string => {

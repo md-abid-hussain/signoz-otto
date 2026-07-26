@@ -46,9 +46,13 @@ export interface PanelOutcome {
   status: string; notes: string; seriesCount?: number;
 }
 
+// Grafana panel type → SigNoz panel type (verified against signoz://dashboard/widgets-instructions:
+// SigNoz has 7 types — bar, histogram, list, pie, table, graph(timeseries), value — and NO arc-dial gauge).
+// gauge (single-value dial) and stat both collapse to a single number → SigNoz "value".
 const PANEL_TYPE: Record<string, string> = {
-  bargauge: 'bar', gauge: 'graph', timeseries: 'graph', graph: 'graph',
-  stat: 'value', table: 'table', piechart: 'pie', nodeGraph: 'graph',
+  bargauge: 'bar', gauge: 'value', timeseries: 'graph', graph: 'graph',
+  stat: 'value', table: 'table', piechart: 'pie', histogram: 'histogram',
+  logs: 'list', nodeGraph: 'graph',
 };
 const ctxToType = (c: string): string => (c === 'resource' ? 'resource' : 'tag');
 

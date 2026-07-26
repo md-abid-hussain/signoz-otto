@@ -181,6 +181,21 @@ function Markdown({ text }: { text: string }) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i]!;
+    // fenced code block ```lang … ``` (was rendering line-by-line before)
+    if (/^\s*```/.test(line)) {
+      const lang = line.trim().replace(/^```/, '').trim();
+      let j = i + 1;
+      const code: string[] = [];
+      while (j < lines.length && !/^\s*```/.test(lines[j]!)) { code.push(lines[j]!); j++; }
+      blocks.push(
+        <div key={i} className="my-1.5 overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-ink)]">
+          {lang && <div className="mono border-b border-[var(--color-line)] px-3 py-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-faint)]">{lang}</div>}
+          <pre className="mono overflow-x-auto px-3 py-2.5 text-[12px] leading-relaxed text-[var(--color-fg-dim)]"><code>{code.join('\n')}</code></pre>
+        </div>,
+      );
+      i = j + 1; // past the closing fence
+      continue;
+    }
     if (isRow(line) && i + 1 < lines.length && isSep(lines[i + 1]!)) {
       let j = i;
       const rows: string[] = [];

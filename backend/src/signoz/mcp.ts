@@ -24,6 +24,9 @@ export interface SigNozMcp {
   write: Record<string, StructuredToolInterface>;
   /** invoke a tool by its base name (e.g. "list_metrics") and JSON-parse the result */
   call<T = unknown>(baseName: string, args: Record<string, unknown>): Promise<T>;
+  /** call a tool through the raw MCP client, bypassing the adapter's client-side zod (which throws a
+   * detail-free "did not match expected schema"). The server returns the AUTHORITATIVE, detailed error. */
+  callRaw: (toolName: string, args: Record<string, unknown>) => Promise<string>;
   toolNames: string[];
   /** MCP resources — the canonical signoz://… docs (dashboard/alert/promql instructions & examples) */
   listResources: () => Promise<unknown>;
@@ -94,11 +97,19 @@ export async function connectSigNoz(opts?: { url?: string; apiKey?: string }): P
   });
 
   const SERVER = 'signoz';
+  const callRaw = async (toolName: string, args: Record<string, unknown>): Promise<string> => {
+    const c = (await client.getClient(SERVER)) as { callTool: (p: { name: string; arguments: Record<string, unknown> }) => Promise<{ content?: { text?: string }[]; isError?: boolean }> } | undefined;
+    if (!c) throw new Error('MCP client unavailable');
+    const res = await c.callTool({ name: toolName, arguments: args });
+    const text = Array.isArray(res?.content) ? res.content.map((x) => x?.text ?? '').join('\n') : JSON.stringify(res);
+    if (res?.isError) throw new Error(text || 'tool returned an error');
+    return text;
+  };
   const listResources = () => client.listResources(SERVER);
   const readResource = (uri: string) => client.readResource(SERVER, uri);
   const getPromptClient = async () => (await client.getClient(SERVER)) as { listPrompts?: () => Promise<unknown>; getPrompt?: (a: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown> } | undefined;
   const listPrompts = async () => { const c = await getPromptClient(); return c?.listPrompts ? c.listPrompts() : { prompts: [] }; };
   const getPrompt = async (name: string, args?: Record<string, unknown>) => { const c = await getPromptClient(); return c?.getPrompt ? c.getPrompt({ name, arguments: args }) : { error: 'prompts not supported' }; };
 
-  return { raw, read, write, call, toolNames: raw.map((t) => t.name), listResources, readResource, listPrompts, getPrompt, close: () => client.close() };
+  return { raw, read, write, call, callRaw, toolNames: raw.map((t) => t.name), listResources, readResource, listPrompts, getPrompt, close: () => client.close() };
 }

@@ -15,19 +15,31 @@ import type { SigNozMcp } from '../signoz/mcp.js';
 /** minimal skill shape we use (deepagents ships two conflicting SkillMetadata types) */
 interface SkillInfo { name: string; description: string; path: string }
 
-/** MCP tool errors THROW, which kills the whole turn — the model never sees the failure and can't
- * fix it. Return them as observations instead so the agent can read the validation message, correct
- * the payload, and retry (the standard tool-error → observation pattern). Generic: no SigNoz knowledge. */
+/** READ tools: keep the real schema (guides the LLM), just turn errors into observations so a failure
+ * doesn't kill the turn. */
 function faultTolerant(t: StructuredToolInterface): StructuredToolInterface {
   return tool(
     async (input: unknown) => {
-      try {
-        return await t.invoke(input as never);
-      } catch (e) {
-        return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nRead this error, correct the payload, and call the tool again. Do not give up after one failure.`;
-      }
+      try { return await t.invoke(input as never); }
+      catch (e) { return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nRead the error, correct it, and call again. Do not give up after one failure.`; }
     },
     { name: t.name, description: t.description, schema: t.schema as never },
+  ) as unknown as StructuredToolInterface;
+}
+
+/** WRITE tools: the adapter's client-side zod re-validates and THROWS before we can act — and it is
+ * both detail-free AND stricter than the server (it rejects round-tripped objects with server-managed
+ * fields like nested query ids). So make the client schema permissive and let the SERVER be the sole,
+ * authoritative validator: it returns a detailed, actionable error the agent can fix, or accepts a
+ * payload the over-strict client would have blocked. The agent gets the real shape from the tool's
+ * description + the MCP resource it's told to read — server-driven, not baked. Still interrupt-gated. */
+function serverValidatedWrite(mcp: SigNozMcp, t: StructuredToolInterface): StructuredToolInterface {
+  return tool(
+    async (input: unknown) => {
+      try { return await mcp.callRaw(t.name, (input ?? {}) as Record<string, unknown>); }
+      catch (e) { return `TOOL_ERROR from ${t.name}: ${(e as Error).message}\nThe server named the exact problem above — fix that field (re-read the schema resource if needed) and call again. Do not give up after one failure.`; }
+    },
+    { name: t.name, description: t.description, schema: z.object({}).passthrough() as never },
   ) as unknown as StructuredToolInterface;
 }
 
@@ -82,6 +94,8 @@ Operating rules (from the SigNoz skills — follow them):
 - One focused query per question. Use parallel discovery, precise execution. Present no-data honestly (healthy-zero vs out-of-range vs missing instrumentation).
 
 ACTIONS (writes: create/update/delete dashboards, alerts, channels): when the user asks you to create or change something — DISCOVER the real values (services, operations, metrics, fields), READ the canonical schema from the MCP resource, author the payload, and CALL the write tool. The platform AUTOMATICALLY pauses every write for the user's approval before it executes, so do NOT ask "reply approve" in text, and NEVER refuse a write for lack of a schema — read the resource instead. Never invent metric/service names.
+CRITICAL — call, don't narrate: the approval gate only triggers when you actually EMIT the write tool call. If you say "I'll update it" / "applying now" and do NOT emit the tool call in that same turn, NOTHING happens and the user sees no approval — that is a failure. Whenever you intend a write, emit the tool call immediately.
+UPDATES are full replacements, not patches: first GET the current object (e.g. signoz_get_dashboard / signoz_get_alert), modify the fields you need in that complete object, then pass the WHOLE modified object to the update tool. Never send a partial payload to an update tool.
 
 Get schemas from the server, never from memory. Before authoring any create/update payload:
 1. signoz_list_resources → see the exact resource URIs THIS server serves (do not assume a URI exists; some referenced in guides are absent).
@@ -112,9 +126,10 @@ export function buildAskAct(mcp: SigNozMcp, opts: { readOnly?: boolean } = {}): 
   // starved the agent of signoz_search_docs / fetch_doc / list_dashboard_templates), plus resources
   // and prompts bridged as tools. The engine keeps its own curated read/write maps; the agent gets everything.
   const isWrite = (n: string) => /(^|_)(create|update|delete|import)_/.test(n);
-  const allTools = mcp.raw.map(faultTolerant); // failures come back as observations, not thrown
-  const writeToolNames = allTools.map((t) => t.name).filter(isWrite);
-  const tools = [...(opts.readOnly ? allTools.filter((t) => !isWrite(t.name)) : allTools), ...mcpSurfaceTools(mcp)];
+  const readTools = mcp.raw.filter((t) => !isWrite(t.name)).map(faultTolerant); // real schema, errors→observations
+  const writeTools = mcp.raw.filter((t) => isWrite(t.name)).map((t) => serverValidatedWrite(mcp, t)); // server-validated
+  const writeToolNames = writeTools.map((t) => t.name);
+  const tools = [...readTools, ...(opts.readOnly ? [] : writeTools), ...mcpSurfaceTools(mcp)];
   const interruptOn: Record<string, boolean> = {};
   if (!opts.readOnly) for (const n of writeToolNames) interruptOn[n] = true; // pause before every write
 
