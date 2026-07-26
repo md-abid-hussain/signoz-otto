@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+
+/* ── Otto design system ─────────────────────────────────────────────────
+   "Observatory": deep-ink canvas, faint graticule grid, signal-amber +
+   phosphor-green duotone, IBM Plex Mono for every numeral / metric name. */
+
+@theme {
+  --font-display: 'Chivo', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --color-ink: #090b10;
+  --color-ink-2: #0d1017;
+  --color-panel: #12161f;
+  --color-panel-2: #171c27;
+  --color-line: #1f2531;
+  --color-line-2: #2a3342;
+
+  --color-fg: #e7ebf2;
+  --color-fg-dim: #99a3b3;
+  --color-fg-faint: #5c6675;
+
+  --color-signal: #ff8a3d;      /* amber — the Otto accent */
+  --color-signal-deep: #e5661a;
+  --color-phosphor: #45e0a0;    /* healthy / live / validated */
+  --color-warn: #f5c451;        /* renamed / caution */
+  --color-danger: #ff5f6d;      /* missing / failed */
+  --color-cyan: #5cc8ff;        /* info / links */
+
+  --shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.02) inset, 0 20px 40px -24px rgba(0, 0, 0, 0.8);
+  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--color-signal) 40%, transparent), 0 8px 30px -10px color-mix(in oklab, var(--color-signal) 45%, transparent);
+}
+
+* { border-color: var(--color-line); }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv05';
+}
+
+/* graticule + radial glow atmosphere on the app canvas */
+.otto-canvas {
+  position: relative;
+  background:
+    radial-gradient(1200px 600px at 78% -10%, color-mix(in oklab, var(--color-signal) 10%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, color-mix(in oklab, var(--color-phosphor) 7%, transparent), transparent 55%),
+    var(--color-ink);
+}
+.otto-canvas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-fg) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-fg) 4%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(1400px 900px at 60% 0%, black, transparent 85%);
+  pointer-events: none;
+}
+
+/* fine grain overlay */
+.otto-grain::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* typography */
+.font-display { font-family: var(--font-display); letter-spacing: -0.02em; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* panel surface */
+.panel {
+  background: linear-gradient(180deg, var(--color-panel-2), var(--color-panel));
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-panel);
+}
+
+/* live pulse dot */
+.pulse { position: relative; }
+.pulse::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.35;
+  animation: pulse 2s ease-out infinite;
+}
+@keyframes pulse {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  70% { transform: scale(1.9); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.scanline { position: relative; overflow: hidden; }
+.scanline::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-signal) 22%, transparent), transparent);
+  animation: sweep 1.6s ease-in-out infinite;
+}
+
+/* focus + interactive */
+button, a, input, textarea, select { outline: none; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-ink), 0 0 0 4px color-mix(in oklab, var(--color-signal) 60%, transparent);
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-line-2); border-radius: 999px; border: 2px solid var(--color-ink); }
+::-webkit-scrollbar-thumb:hover { background: #384357; }
+
+::selection { background: color-mix(in oklab, var(--color-signal) 40%, transparent); color: #fff; }

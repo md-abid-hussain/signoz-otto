@@ -1,0 +1,46 @@
+# Otto — one `docker compose up`. Runs the backend (API + engine) and the nginx-served
+# frontend. SigNoz and the SigNoz MCP server run separately (your existing self-hosted setup);
+# the app reaches them over host.docker.internal by default — override via the root .env.
+#
+#   cp .env.example .env   # fill in SIGNOZ_API_KEY + OPENAI_API_KEY
+#   docker compose up --build
+#   open http://localhost:5273
+
+services:
+  otto-app:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      PORT: "8010"
+      SIGNOZ_URL: ${SIGNOZ_URL:-http://host.docker.internal:8080}
+      SIGNOZ_MCP_URL: ${SIGNOZ_MCP_URL:-http://host.docker.internal:8000/mcp}
+      GRAFANA_URL: ${GRAFANA_URL:-http://host.docker.internal:8081/grafana}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTTO_OTEL: ${OTTO_OTEL:-1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5.6-terra}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8010:8010"
+
+  otto-web:
+    build: ./frontend
+    depends_on:
+      - otto-app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "5273:80"
+
+# If you do NOT already run the SigNoz MCP server, uncomment this sidecar and set
+# SIGNOZ_MCP_URL=http://signoz-mcp:8000/mcp in your .env:
+#
+#  signoz-mcp:
+#    image: signoz/signoz-mcp-server:latest
+#    environment:
+#      TRANSPORT_MODE: http
+#      SIGNOZ_URL: ${SIGNOZ_URL}
+#      SIGNOZ_API_KEY: ${SIGNOZ_API_KEY}
+#    ports:
+#      - "8000:8000"

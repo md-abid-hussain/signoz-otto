@@ -1,0 +1,22 @@
+# deps & build
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+
+# secrets — NEVER commit real keys
+.env
+**/.env
+!**/.env.example
+!.env.example
+
+# logs & os
+*.log
+**/*.log
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
