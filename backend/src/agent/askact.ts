@@ -19,7 +19,9 @@ interface SkillInfo { name: string; description: string; path: string }
  * bridged 1:1 here. Nothing is hand-written about SigNoz itself — the agent reads the server's own
  * canonical docs at runtime. (Tools need no bridge: all of them are passed through as-is.) */
 function mcpSurfaceTools(mcp: SigNozMcp) {
-  const clip = (v: unknown, n: number) => JSON.stringify(v).slice(0, n);
+  // truncate with an explicit marker so the agent knows the doc was cut and can narrow — never
+  // hand back silently-sliced (broken) JSON it might try to complete from imagination.
+  const clip = (v: unknown, n: number) => { const s = JSON.stringify(v); return s.length <= n ? s : s.slice(0, n) + '\n…(truncated — read a more specific resource)'; };
   return [
     tool(async () => clip(await mcp.listResources(), 8000), {
       name: 'signoz_list_resources',
@@ -91,15 +93,21 @@ export interface AskActAgent {
 /** Build the Ask & Act deep agent over the given SigNoz MCP connection. */
 export function buildAskAct(mcp: SigNozMcp, opts: { readOnly?: boolean } = {}): AskActAgent {
   const skills = safeListSkills();
-  // gpt-5.6-terra rejects function tools unless reasoning_effort is 'none' on /v1/chat/completions
-  const model = new ChatOpenAI({ model: process.env.LLM_MODEL ?? 'gpt-5.6-terra', apiKey: process.env.OPENAI_API_KEY, modelKwargs: { reasoning_effort: 'none' } });
+  // gpt-5.6-terra rejects function tools on /v1/chat/completions unless reasoning is off — but the
+  // /v1/responses API supports tools WITH reasoning on. Use it so the agent can actually reason
+  // (choose signals, self-correct on validation errors) instead of being lobotomized. Verified in
+  // scripts/simple-agent.ts: responses-API + tools + multi-turn memory all work.
+  const model = new ChatOpenAI({ model: process.env.LLM_MODEL ?? 'gpt-5.6-terra', apiKey: process.env.OPENAI_API_KEY, useResponsesApi: true } as never);
 
   // THE COMPLETE MCP SURFACE: every tool the server exposes (not a curated subset — that's what
   // starved the agent of signoz_search_docs / fetch_doc / list_dashboard_templates), plus resources
   // and prompts bridged as tools. The engine keeps its own curated read/write maps; the agent gets everything.
   // Give the agent the FULL MCP surface, every tool with its real schema. Writes are gated by
   // interruptOn (below); read-only mode simply drops the write tools.
-  const isWrite = (n: string) => /(^|_)(create|update|delete|import)_/.test(n);
+  // Gate anything that isn't a known read verb (robust to write verbs beyond create/update/delete —
+  // e.g. mute/pause/reset/apply — so a new write tool can't slip through ungated).
+  const READ_VERBS = new Set(['get', 'list', 'search', 'fetch', 'read', 'describe', 'explain', 'query', 'aggregate', 'execute', 'check']);
+  const isWrite = (n: string) => !READ_VERBS.has(n.replace(/^signoz_/, '').split('_')[0]!);
   const allTools = mcp.raw; // real schemas, plain — let the framework handle tool errors as observations
   const writeToolNames = allTools.map((t) => t.name).filter(isWrite);
   const tools = [...(opts.readOnly ? allTools.filter((t) => !isWrite(t.name)) : allTools), ...mcpSurfaceTools(mcp)];
