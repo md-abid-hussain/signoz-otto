@@ -78,6 +78,20 @@ export async function proposeSlo(mcp: SigNozMcp, ev: SloEvidence): Promise<SloPr
   return { service: ev.service, operation: ev.operation, objectivePct, latencyThresholdMs, windowDays, reasoning, budgetHoursPerWindow, evidence: { ...ev, pctUnderThreshold } };
 }
 
+/** Apply the user's edits (from the review screen) onto a proposal before it's created. The copilot
+ * proposes; the human decides the actual target — so any of objective/threshold/window can be
+ * overridden, and the error budget is recomputed to stay consistent. */
+export function applyOverrides(
+  p: SloProposal,
+  o: { objectivePct?: number; latencyThresholdMs?: number; windowDays?: number },
+): SloProposal {
+  const objectivePct = Math.min(99.99, Math.max(1, o.objectivePct ?? p.objectivePct));
+  const latencyThresholdMs = Math.max(1, Math.round(o.latencyThresholdMs ?? p.latencyThresholdMs));
+  const windowDays = Math.max(1, Math.round(o.windowDays ?? p.windowDays));
+  const budgetHoursPerWindow = ((100 - objectivePct) / 100) * windowDays * 24;
+  return { ...p, objectivePct, latencyThresholdMs, windowDays, budgetHoursPerWindow };
+}
+
 function niceCeil(ms: number): number {
   const steps = [50, 100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 2500, 3000, 5000];
   return steps.find((s) => s >= ms) ?? Math.ceil(ms / 1000) * 1000;

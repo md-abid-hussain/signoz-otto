@@ -16,6 +16,11 @@ export function Slo() {
   const [running, setRunning] = useState<false | 'analyze' | 'apply'>(false);
   const [steps, setSteps] = useState<StepLine[]>([]);
   const [error, setError] = useState<string>();
+  // editable target — the copilot proposes, the human decides before creating
+  const [objective, setObjective] = useState(0);
+  const [threshold, setThreshold] = useState(0);
+  const [windowDays, setWindowDays] = useState(0);
+  const budgetHours = ((100 - objective) / 100) * windowDays * 24;
 
   const services = useQuery({ queryKey: ['services'], queryFn: api.services });
   const operations = useQuery({ queryKey: ['operations', service], queryFn: () => api.operations(service), enabled: !!service });
@@ -27,9 +32,16 @@ export function Slo() {
     setRunning(apply ? 'apply' : 'analyze'); setError(undefined);
     if (!apply) { setSteps([]); setResult(undefined); setApplied(false); }
     try {
-      await streamPost<SloStreamEvent>('/slo/stream', { service, operation, timeRange: '6h', apply, channel: channel || undefined }, (e) => {
+      // on apply, send the (possibly edited) target so the human's decision — not just the heuristic — is created
+      const body = { service, operation, timeRange: '6h', apply, channel: channel || undefined,
+        ...(apply ? { objectivePct: objective, latencyThresholdMs: threshold, windowDays } : {}) };
+      await streamPost<SloStreamEvent>('/slo/stream', body, (e) => {
         if (e.type === 'step') setSteps((s) => [...s.filter((x) => x.step !== e.step || x.status !== 'start' || e.status !== 'done'), { step: e.step, status: e.status, note: e.note }]);
-        else if (e.type === 'done') { setResult(e.result); if (apply) setApplied(true); }
+        else if (e.type === 'done') {
+          setResult(e.result);
+          if (apply) setApplied(true);
+          else { setObjective(e.result.proposal.objectivePct); setThreshold(e.result.proposal.latencyThresholdMs); setWindowDays(e.result.proposal.windowDays); } // seed the editable target from the proposal
+        }
         else if (e.type === 'error') setError(e.error);
       });
     } catch (err) { setError((err as Error).message); }
@@ -128,17 +140,28 @@ export function Slo() {
             </Panel>
 
             <Panel glow className="px-6 py-6">
-              <div className="flex items-center gap-2"><Dot color="var(--color-signal)" /><SectionLabel>proposed objective</SectionLabel></div>
-              <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="font-display text-[34px] font-black text-[var(--color-fg)]">{result.proposal.objectivePct}%</span>
-                <span className="text-[15px] text-[var(--color-fg-dim)]">of requests succeed <span className="text-[var(--color-fg)]">and</span> complete under</span>
-                <span className="mono text-[22px] font-semibold text-[var(--color-signal)]">{result.proposal.latencyThresholdMs} ms</span>
-                <span className="text-[15px] text-[var(--color-fg-dim)]">over {result.proposal.windowDays} days</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2"><Dot color="var(--color-signal)" /><SectionLabel>{applied ? 'objective' : 'target objective'}</SectionLabel></div>
+                {!applied && <span className="mono text-[11px] text-[var(--color-fg-faint)]">editable — the copilot proposes, you decide</span>}
               </div>
+              {applied ? (
+                <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="font-display text-[34px] font-black text-[var(--color-fg)]">{result.proposal.objectivePct}%</span>
+                  <span className="text-[15px] text-[var(--color-fg-dim)]">of requests succeed <span className="text-[var(--color-fg)]">and</span> complete under</span>
+                  <span className="mono text-[22px] font-semibold text-[var(--color-signal)]">{result.proposal.latencyThresholdMs} ms</span>
+                  <span className="text-[15px] text-[var(--color-fg-dim)]">over {result.proposal.windowDays} days</span>
+                </div>
+              ) : (
+                <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3">
+                  <NumField label="objective %" value={objective} onChange={setObjective} step={0.1} min={1} max={99.99} accent="var(--color-fg)" />
+                  <NumField label="latency threshold (ms)" value={threshold} onChange={setThreshold} step={10} min={1} accent="var(--color-signal)" />
+                  <NumField label="window (days)" value={windowDays} onChange={setWindowDays} step={1} min={1} accent="var(--color-fg)" />
+                </div>
+              )}
               <p className="mt-4 max-w-3xl text-[13.5px] leading-relaxed text-[var(--color-fg-dim)]">{result.proposal.reasoning}</p>
               <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--color-line)] px-3 py-2">
                 <SectionLabel>error budget</SectionLabel>
-                <span className="mono text-[13px] text-[var(--color-fg)]">{result.proposal.budgetHoursPerWindow.toFixed(1)} h degraded / {result.proposal.windowDays}d</span>
+                <span className="mono text-[13px] text-[var(--color-fg)]">{(applied ? result.proposal.budgetHoursPerWindow : budgetHours).toFixed(1)} h degraded / {applied ? result.proposal.windowDays : windowDays}d</span>
               </div>
             </Panel>
 
@@ -175,4 +198,20 @@ export function Slo() {
 
 function trendColor(v: 'stable' | 'degrading' | 'improving'): string {
   return v === 'degrading' ? 'var(--color-danger)' : v === 'improving' ? 'var(--color-phosphor)' : 'var(--color-fg-dim)';
+}
+
+function NumField({ label, value, onChange, step, min, max, accent }: {
+  label: string; value: number; onChange: (n: number) => void; step: number; min: number; max?: number; accent: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="mono text-[10px] uppercase tracking-wider text-[var(--color-fg-faint)]">{label}</span>
+      <input
+        type="number" value={Number.isFinite(value) ? value : ''} step={step} min={min} max={max}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="mono w-36 rounded-lg border border-[var(--color-line-2)] bg-[var(--color-ink-2)] px-3 py-2 text-[18px] font-semibold focus:border-[var(--color-signal)] focus:outline-none"
+        style={{ color: accent }}
+      />
+    </label>
+  );
 }

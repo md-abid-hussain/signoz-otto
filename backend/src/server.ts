@@ -18,7 +18,7 @@ import { listGrafanaDashboards, fetchGrafanaDashboard } from './ingest/grafanaCl
 import { parseGrafanaDashboard } from './ingest/grafana.js';
 import { runReadiness } from './readiness/index.js';
 import { fullMigrate } from './engine/fullmigrate.js';
-import { analyzeSlo, proposeSlo, applySlo, latencyTrend, analyzeSloReasoning } from './engine/slo.js';
+import { analyzeSlo, proposeSlo, applySlo, applyOverrides, latencyTrend, analyzeSloReasoning } from './engine/slo.js';
 import { buildOttoOpsDashboard } from './engine/opsdash.js';
 import { buildAskAct } from './agent/askact.js';
 
@@ -293,7 +293,7 @@ app.post('/api/migrate/stream', async (req, reply) => {
 app.post('/api/slo/stream', async (req, reply) => {
   const send = sse(reply);
   try {
-    const b = req.body as { service?: string; operation?: string; timeRange?: string; apply?: boolean; channel?: string };
+    const b = req.body as { service?: string; operation?: string; timeRange?: string; apply?: boolean; channel?: string; objectivePct?: number; latencyThresholdMs?: number; windowDays?: number };
     if (!b.service || !b.operation) throw new Error('provide { service, operation }');
     const mcp = await connectSigNoz();
     send({ type: 'step', step: 'evidence', status: 'start', note: 'gathering traffic evidence' });
@@ -303,13 +303,15 @@ app.post('/api/slo/stream', async (req, reply) => {
     const trend = await latencyTrend(mcp, b.service, b.operation);
     send({ type: 'step', step: 'trend', status: 'done', note: `latency ${trend.verdict}` });
     send({ type: 'step', step: 'propose', status: 'start', note: 'sizing the objective' });
-    const proposal = await proposeSlo(mcp, evidence);
-    send({ type: 'step', step: 'propose', status: 'done', note: `${proposal.objectivePct}% < ${proposal.latencyThresholdMs}ms / ${proposal.windowDays}d` });
+    const suggested = await proposeSlo(mcp, evidence);
+    send({ type: 'step', step: 'propose', status: 'done', note: `${suggested.objectivePct}% < ${suggested.latencyThresholdMs}ms / ${suggested.windowDays}d` });
     send({ type: 'step', step: 'reasoning', status: 'start', note: 'SRE analysis & alternatives' });
-    const analysis = await analyzeSloReasoning(evidence, proposal, trend);
+    const analysis = await analyzeSloReasoning(evidence, suggested, trend);
     send({ type: 'step', step: 'reasoning', status: 'done', note: `binding SLI: ${analysis.sliType}` });
+    // the human decides the actual target: apply any edits from the review screen before creating
+    const proposal = b.apply ? applyOverrides(suggested, b) : suggested;
     let applied: Awaited<ReturnType<typeof applySlo>> | undefined;
-    if (b.apply) { send({ type: 'step', step: 'apply', status: 'start', note: 'creating dashboard + alert' }); applied = await applySlo(mcp, proposal, b.channel); send({ type: 'step', step: 'apply', status: 'done' }); }
+    if (b.apply) { send({ type: 'step', step: 'apply', status: 'start', note: `creating ${proposal.objectivePct}% < ${proposal.latencyThresholdMs}ms / ${proposal.windowDays}d` }); applied = await applySlo(mcp, proposal, b.channel); send({ type: 'step', step: 'apply', status: 'done' }); }
     await mcp.close();
     const webUrl = applied?.dashboardId ? `${process.env.SIGNOZ_URL ?? ''}/dashboard/${applied.dashboardId}` : undefined;
     if (b.apply && applied?.dashboardId) recordRun({
