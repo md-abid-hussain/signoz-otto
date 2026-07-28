@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeMetric } from '../src/readiness/index.js';
+import { normalizeMetric, searchStem } from '../src/readiness/index.js';
 
 describe('normalizeMetric — Prometheus↔OTel rename matching', () => {
   it('matches counter with _total dropped and dots↔underscores', () => {
@@ -23,5 +23,23 @@ describe('normalizeMetric — Prometheus↔OTel rename matching', () => {
 
   it('does not collapse unrelated metrics', () => {
     expect(normalizeMetric('http_requests_total')).not.toBe(normalizeMetric('http_request_duration_seconds'));
+  });
+});
+
+describe('searchStem — targeted metric lookup (fixes false "missing")', () => {
+  it('drops _total and picks the most distinctive token', () => {
+    expect(searchStem('otelcol_exporter_sent_metric_points_total')).toBe('exporter');
+    expect(searchStem('traces_span_metrics_calls_total')).toBe('metrics');
+    expect(searchStem('http_requests_total')).toBe('requests');
+  });
+
+  it('strips unit suffixes before choosing the stem', () => {
+    expect(searchStem('node_memory_MemAvailable_bytes')).toBe('memavailable');
+    expect(searchStem('http_request_duration_seconds')).toBe('duration');
+  });
+
+  it('matches the same stem across Prometheus↔OTel spelling', () => {
+    expect(searchStem('otelcol_exporter_sent_metric_points_total'))
+      .toBe(searchStem('otelcol.exporter.sent.metric.points'));
   });
 });

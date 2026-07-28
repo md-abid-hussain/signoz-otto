@@ -20,10 +20,26 @@ export function normalizeMetric(name: string): string {
 
 interface MetricRow { metricName: string }
 
-export async function fetchInstanceMetrics(mcp: SigNozMcp): Promise<string[]> {
+/** A distinctive search stem for a metric dependency, so a targeted list_metrics(searchText) finds
+ * its family regardless of Prometheus↔OTel spelling (dots vs underscores, _total/unit suffixes).
+ * The longest token substring-matches across separators (e.g. 'exporter' hits both
+ * otelcol_exporter_sent_metric_points and otelcol.exporter.sent.metric.points). */
+export function searchStem(dep: string): string {
+  const core = dep.toLowerCase()
+    .replace(/_(total|count|sum|bucket)$/, '')                                  // aggregation/type suffix
+    .replace(/_((milli|micro|nano)?seconds?|bytes|ratio|percent|celsius)$/, ''); // unit suffix
+  const tokens = core.split(/[._]/).filter((t) => t.length >= 4);
+  return tokens.sort((a, b) => b.length - a.length)[0] ?? core;
+}
+
+/** Fetch the instance metrics that matter for THIS dashboard: one base page plus a targeted page
+ * per dependency family (deduped stems). This replaces blind sampling with fixed stems, which
+ * false-flagged real metrics as "missing" when they fell outside the sample. */
+export async function fetchInstanceMetrics(mcp: SigNozMcp, deps: string[] = []): Promise<string[]> {
   const seen = new Set<string>();
-  // a few stems widen coverage without needing an unbounded list
-  for (const stem of ['', 'traces', 'signoz', 'http', 'span', 'duration', 'calls', 'k8s', 'system']) {
+  const stems = new Set<string>(['']); // '' = base page (top metrics); then one stem per dep family
+  for (const d of deps) stems.add(searchStem(d));
+  for (const stem of stems) {
     const res = await mcp.call<{ data?: { metrics?: MetricRow[] } }>('list_metrics', {
       ...(stem ? { searchText: stem } : {}),
       timeRange: '7d',
@@ -51,7 +67,7 @@ function resolveMetric(dep: string, instance: string[], instanceNorm: Map<string
 }
 
 export async function runReadiness(dash: ParsedDashboard, mcp: SigNozMcp): Promise<ReadinessReport> {
-  const instance = await fetchInstanceMetrics(mcp);
+  const instance = await fetchInstanceMetrics(mcp, dash.dependencies.metrics);
   const instanceNorm = new Map<string, string>();
   for (const m of instance) if (!instanceNorm.has(normalizeMetric(m))) instanceNorm.set(normalizeMetric(m), m);
 
