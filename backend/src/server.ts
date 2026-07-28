@@ -8,8 +8,8 @@
 //   POST /api/slo                    → { service, operation, timeRange?, apply?, channel? } → evidence + proposal (+ ids if apply)
 //   POST /api/ops/dashboard          → { apply? } → the Otto Ops self-observability dashboard (+ created id if apply)
 //   POST /api/ask                    → { question } → Ask & Act read-only answer over live SigNoz
-import { initOtel, ottoAgentTracer } from './otel/index.js';
-if (process.env.OTTO_OTEL) initOtel(); // self-instrument the API + engine when enabled
+import './otel/bootstrap.js'; // FIRST — starts OTel before Fastify loads node:http (see bootstrap.ts)
+import { ottoAgentTracer, logInfo, logError } from './otel/index.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Command } from '@langchain/langgraph';
@@ -24,6 +24,10 @@ import { buildAskAct } from './agent/askact.js';
 
 const app = Fastify({ logger: false });
 await app.register(cors, { origin: true });
+// record every request error as an exception (on the active request span) + an OTel log
+app.addHook('onError', async (req, _reply, err) => {
+  logError(`${req.method} ${req.url} failed`, err, { 'http.route': req.routeOptions?.url ?? req.url });
+});
 
 /** resolve a dashboard JSON from either an uploaded body or a Grafana uid */
 async function resolveDashboard(body: { uid?: string; dashboard?: unknown }): Promise<unknown> {
@@ -321,3 +325,4 @@ app.post('/api/slo/stream', async (req, reply) => {
 const port = Number(process.env.PORT ?? 8010);
 await app.listen({ port, host: '0.0.0.0' });
 console.log(`Otto API listening on http://localhost:${port}`);
+logInfo('otto api started', { 'otto.port': port, 'otel.enabled': !!process.env.OTTO_OTEL });

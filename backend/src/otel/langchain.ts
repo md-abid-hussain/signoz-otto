@@ -4,10 +4,13 @@
 // the OTel GenAI semantic conventions (gen_ai.*). Attach via `callbacks: [ottoAgentTracer()]`.
 
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
-import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+import { trace, context, metrics, SpanStatusCode } from '@opentelemetry/api';
 import type { Span, Context, Attributes } from '@opentelemetry/api';
 
 const tracer = () => trace.getTracer('otto.agent');
+// same instrument as engine/otel index → AgentOtto and migration both count into otto.llm.tokens
+// (getMeter/createCounter are idempotent for a given name, so this shares the one counter).
+const llmTokensCounter = () => metrics.getMeter('otto').createCounter('otto.llm.tokens', { description: 'LLM tokens consumed, by direction' });
 
 type Serialized = { id?: string[] } | undefined;
 
@@ -15,6 +18,7 @@ export class OtelAgentTracer extends BaseCallbackHandler {
   name = 'otto-otel';
   // deepagents runs many concurrent tool calls; track each run's span + child context by run-id
   private runs = new Map<string, { span: Span; ctx: Context }>();
+  private models = new Map<string, string>(); // runId → model, so handleLLMEnd can tag the token metric
 
   private begin(runId: string, parentRunId: string | undefined, name: string, attrs: Attributes): void {
     const parentCtx = (parentRunId && this.runs.get(parentRunId)?.ctx) || context.active();
@@ -48,6 +52,7 @@ export class OtelAgentTracer extends BaseCallbackHandler {
   }
   private beginLLM(llm: Serialized, runId: string, parentRunId: string | undefined, meta: Record<string, unknown> | undefined, runName: string | undefined, n: number) {
     const model = (meta?.ls_model_name as string) ?? runName ?? this.lastId(llm) ?? 'model';
+    this.models.set(runId, model);
     this.begin(runId, parentRunId, 'llm.call', {
       'gen_ai.operation.name': 'chat',
       'gen_ai.system': (meta?.ls_provider as string) ?? 'openai',
@@ -57,6 +62,15 @@ export class OtelAgentTracer extends BaseCallbackHandler {
   }
   handleLLMEnd(output: { llmOutput?: Record<string, unknown>; generations?: unknown }, runId: string) {
     const u = (output?.llmOutput?.tokenUsage ?? output?.llmOutput?.usage ?? output?.llmOutput?.estimatedTokenUsage) as Record<string, number> | undefined;
+    const model = this.models.get(runId) ?? 'model';
+    this.models.delete(runId);
+    if (u) {
+      const input = u.promptTokens ?? u.input_tokens ?? 0;
+      const output_ = u.completionTokens ?? u.output_tokens ?? 0;
+      // feed the shared token counter so AgentOtto usage shows up alongside migration usage
+      llmTokensCounter().add(input, { direction: 'input', model });
+      llmTokensCounter().add(output_, { direction: 'output', model });
+    }
     this.finish(runId, u ? {
       'gen_ai.usage.input_tokens': u.promptTokens ?? u.input_tokens ?? 0,
       'gen_ai.usage.output_tokens': u.completionTokens ?? u.output_tokens ?? 0,

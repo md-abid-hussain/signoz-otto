@@ -8,17 +8,25 @@
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_SERVICE_NAMESPACE } from '@opentelemetry/semantic-conventions';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { trace, metrics, SpanStatusCode, context } from '@opentelemetry/api';
+import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import type { Span, Attributes } from '@opentelemetry/api';
 
 const SERVICE_NAME = process.env.OTTO_SERVICE_NAME ?? 'otto';
-// OTLP/HTTP endpoint; the exporter appends /v1/traces and /v1/metrics.
+// group otto + otto-web under one application, and tag the environment — the two dimensions
+// SigNoz filters services by out of the box (service.namespace / deployment.environment).
+const SERVICE_NAMESPACE = process.env.OTTO_SERVICE_NAMESPACE ?? 'otto';
+const DEPLOY_ENV = process.env.OTEL_DEPLOYMENT_ENV ?? process.env.NODE_ENV ?? 'demo';
+// OTLP/HTTP endpoint; the exporter appends /v1/traces, /v1/metrics, /v1/logs.
 const ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318';
 
 let sdk: NodeSDK | undefined;
@@ -32,14 +40,20 @@ export function initOtel(): void {
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: SERVICE_NAME,
       [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? '0.1.0',
+      [ATTR_SERVICE_NAMESPACE]: SERVICE_NAMESPACE,
+      'deployment.environment': DEPLOY_ENV,
     }),
     traceExporter: new OTLPTraceExporter({ url: `${ENDPOINT}/v1/traces` }),
     metricReader: new PeriodicExportingMetricReader({
       exporter: new OTLPMetricExporter({ url: `${ENDPOINT}/v1/metrics` }),
       exportIntervalMillis: 10_000,
     }),
-    // auto-instrument outbound HTTP: LLM (OpenAI), the MCP sidecar, and Grafana all become spans
-    instrumentations: [new HttpInstrumentation(), new UndiciInstrumentation()],
+    // logs → SigNoz too, auto-correlated to the active span (trace_id/span_id stamped by the SDK)
+    logRecordProcessors: [new BatchLogRecordProcessor({ exporter: new OTLPLogExporter({ url: `${ENDPOINT}/v1/logs` }) })],
+    // inbound HTTP + Fastify routes (APM RED for the API itself) and outbound HTTP/undici
+    // (LLM, MCP sidecar, Grafana). This module is imported first (see otel/bootstrap.ts) so the
+    // instrumentation is registered before Fastify pulls in node:http.
+    instrumentations: [new HttpInstrumentation(), new FastifyInstrumentation(), new UndiciInstrumentation()],
   });
   sdk.start();
 }
@@ -78,6 +92,19 @@ export function recordLlm(inputTokens: number, outputTokens: number, model: stri
 
 export function recordRunDuration(ms: number, playbook: string, status: string): void {
   runDuration().record(ms, { playbook, status });
+}
+
+// ---- logs (OTel Logs API → SigNoz, correlated to the active trace) ------------------
+const otoLogger = () => logs.getLogger('otto');
+
+export function logInfo(body: string, attributes: Attributes = {}): void {
+  otoLogger().emit({ severityNumber: SeverityNumber.INFO, severityText: 'INFO', body, attributes });
+}
+
+/** error log with OTel exception semconv attributes; pass the caught error for type/message/stack */
+export function logError(body: string, err?: unknown, attributes: Attributes = {}): void {
+  const ex = err instanceof Error ? { 'exception.type': err.name, 'exception.message': err.message, 'exception.stacktrace': err.stack ?? '' } : {};
+  otoLogger().emit({ severityNumber: SeverityNumber.ERROR, severityText: 'ERROR', body, attributes: { ...attributes, ...ex } });
 }
 
 /** Run `fn` inside a span, recording exceptions and status. Returns fn's result. */
