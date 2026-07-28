@@ -110,7 +110,6 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => req<{ ok: boolean }>('/health'),
   connect: () => req<ConnectStatus>('/connect'),
   grafanaDashboards: () => req<{ dashboards: GrafanaDash[] }>('/grafana/dashboards'),
   services: () => req<ServicesResult>('/signoz/services'),
@@ -118,9 +117,6 @@ export const api = {
   channels: () => req<{ channels: Channel[] }>('/signoz/channels'),
   auditCoverage: () => req<CoverageResult>('/audit/coverage'),
   runs: () => req<{ runs: RunRecord[] }>('/runs'),
-  readiness: (b: { uid?: string; dashboard?: unknown }) => req<ReadinessResult>('/readiness', { method: 'POST', body: JSON.stringify(b) }),
-  migrate: (b: { uid?: string; dashboard?: unknown; apply?: boolean }) => req<MigrateResult>('/migrate', { method: 'POST', body: JSON.stringify(b) }),
-  slo: (b: { service: string; operation: string; timeRange?: string; apply?: boolean; channel?: string }) => req<SloResult>('/slo', { method: 'POST', body: JSON.stringify(b) }),
   opsDashboard: (b: { apply?: boolean }) => req<{ applied: boolean; createdId?: string; webUrl?: string }>('/ops/dashboard', { method: 'POST', body: JSON.stringify(b) }),
   ask: (b: { question?: string; threadId: string; approve?: boolean }) => req<AskResult>('/ask', { method: 'POST', body: JSON.stringify(b) }),
 };

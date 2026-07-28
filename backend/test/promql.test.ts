@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { mapPromql, matchersToFilter } from '../src/mapper/promql.js';
-import { toQueryApi, toWidget } from '../src/signoz/serialize.js';
 
 describe('matchersToFilter', () => {
   it('maps equality and regex matchers', () => {
@@ -106,31 +105,5 @@ describe('mapPromql — unsupported long tail', () => {
   it('label_replace is unsupported', () => {
     const r = mapPromql('label_replace(up, "x", "$1", "y", "(.*)")');
     expect(r.ok).toBe(false);
-  });
-});
-
-describe('serializers produce the two verified v5 shapes', () => {
-  const r = mapPromql('sum by (service) (rate(signoz_calls_total{code=~"5.."}[5m]))');
-  const q = r.query!;
-
-  it('toQueryApi shape (validation)', () => {
-    const api = toQueryApi(q) as any;
-    expect(api.type).toBe('builder_query');
-    expect(api.spec.signal).toBe('metrics');
-    expect(api.spec.aggregations[0]).toMatchObject({
-      metricName: 'signoz_calls_total',
-      timeAggregation: 'rate',
-      spaceAggregation: 'sum',
-    });
-    expect(api.spec.filter.expression).toBe("code REGEXP '5..'");
-    expect(api.spec.groupBy).toEqual([{ name: 'service' }]);
-  });
-
-  it('toWidget shape (dashboard create)', () => {
-    const w = toWidget(q) as any;
-    expect(w.queryName).toBe('A');
-    expect(w.dataSource).toBe('metrics');
-    expect(w.groupBy).toEqual([{ key: 'service', dataType: 'string', type: 'tag' }]);
-    expect(w.filter.expression).toBe("code REGEXP '5..'");
   });
 });

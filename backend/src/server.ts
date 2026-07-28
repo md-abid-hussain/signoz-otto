@@ -70,41 +70,6 @@ function recordRun(r: Omit<RunRecord, 'id' | 'at'>): void {
 }
 app.get('/api/runs', async () => ({ runs }));
 
-app.post('/api/readiness', async (req, reply) => {
-  try {
-    const dash = parseGrafanaDashboard((await resolveDashboard(req.body as never)) as never);
-    const mcp = await connectSigNoz();
-    const report = await runReadiness(dash, mcp);
-    await mcp.close();
-    return { title: dash.title, panels: dash.panels.length, structural: dash.structural.length, report };
-  } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
-});
-
-app.post('/api/migrate', async (req, reply) => {
-  try {
-    const b = req.body as { uid?: string; dashboard?: unknown; apply?: boolean };
-    const dash = parseGrafanaDashboard((await resolveDashboard(b)) as never);
-    const mcp = await connectSigNoz();
-    const report = await runReadiness(dash, mcp);
-    const res = await fullMigrate(dash, report, mcp, { apply: !!b.apply });
-    await mcp.close();
-    const webUrl = res.createdId ? `${process.env.SIGNOZ_URL ?? ''}/dashboard/${res.createdId}` : undefined;
-    if (b.apply && res.createdId) recordRun({
-      playbook: 'migration', title: dash.title, applied: true, webUrl,
-      summary: `${res.included}/${dash.panels.length} panels migrated`,
-      stats: { migrated: res.included, total: dash.panels.length, llmTokens: res.receipt.llm.inputTokens + res.receipt.llm.outputTokens, durationMs: res.receipt.durationMs },
-    });
-    return {
-      title: dash.title,
-      summary: { total: dash.panels.length, migrated: res.included },
-      outcomes: res.outcomes,
-      receipt: res.receipt,
-      createdId: res.createdId,
-      webUrl,
-    };
-  } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
-});
-
 // live service inventory — the observed application, with Otto (the copilot) held separate
 const OTTO_SERVICE = process.env.OTTO_SERVICE_NAME ?? 'otto';
 interface Svc { name: string; callRate?: number; errorRate?: number; p99Ns?: number; numCalls?: number }
@@ -187,32 +152,6 @@ app.get('/api/signoz/channels', async (_req, reply) => {
     const channels = rows.map((c) => ({ name: String(c.name ?? ''), type: String(c.type ?? '') })).filter((c) => c.name);
     return { channels };
   } catch (e) { return reply.code(502).send({ error: (e as Error).message }); }
-});
-
-app.post('/api/slo', async (req, reply) => {
-  try {
-    const b = req.body as { service?: string; operation?: string; timeRange?: string; apply?: boolean; channel?: string; analyze?: boolean };
-    if (!b.service || !b.operation) throw new Error('provide { service, operation }');
-    const mcp = await connectSigNoz();
-    const evidence = await analyzeSlo(mcp, b.service, b.operation, b.timeRange ?? '6h');
-    const proposal = await proposeSlo(mcp, evidence);
-    // deeper analysis (multi-step): trend check + SRE-grounded LLM reasoning — skipped only on re-apply
-    const trend = await latencyTrend(mcp, b.service, b.operation);
-    const analysis = await analyzeSloReasoning(evidence, proposal, trend);
-    let applied: Awaited<ReturnType<typeof applySlo>> | undefined;
-    if (b.apply) applied = await applySlo(mcp, proposal, b.channel);
-    await mcp.close();
-    const webUrl = applied?.dashboardId ? `${process.env.SIGNOZ_URL ?? ''}/dashboard/${applied.dashboardId}` : undefined;
-    if (b.apply && applied?.dashboardId) recordRun({
-      playbook: 'slo', title: `${b.service} · ${b.operation}`, applied: true, webUrl,
-      summary: `SLO ${proposal.objectivePct}% < ${proposal.latencyThresholdMs}ms / ${proposal.windowDays}d${applied.alertCreated ? ' + alert' : ''}`,
-      stats: { objectivePct: proposal.objectivePct, thresholdMs: proposal.latencyThresholdMs, successPct: Number(evidence.successPct.toFixed(2)) },
-    });
-    return {
-      evidence, proposal, analysis, applied,
-      webUrl,
-    };
-  } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
 });
 
 app.post('/api/ops/dashboard', async (req, reply) => {

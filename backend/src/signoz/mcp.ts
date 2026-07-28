@@ -1,32 +1,16 @@
 // SigNoz access over MCP (HTTP transport) via @langchain/mcp-adapters.
 // Connects to signoz-mcp at SIGNOZ_MCP_URL (/mcp, :8000) with the required
-// SIGNOZ-API-KEY header (verified: 401 without). Returns LangChain tool objects,
-// partitioned into read (safe any time) and write (apply stage only).
+// SIGNOZ-API-KEY header (verified: 401 without). Exposes the raw LangChain tool
+// objects, a JSON-parsing `call()` helper, and the MCP resources/prompts.
 
 import { MultiServerMCPClient } from '@langchain/mcp-adapters';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { withSpan } from '../otel/index.js';
 
-const READ_TOOLS = [
-  'list_metrics', 'get_field_keys', 'get_field_values', 'execute_builder_query',
-  'list_services', 'get_service_top_operations', 'aggregate_traces', 'get_dashboard',
-  'list_dashboards', 'list_notification_channels', 'get_trace_details', 'search_traces',
-];
-const WRITE_TOOLS = [
-  'create_dashboard', 'update_dashboard', 'delete_dashboard',
-  'create_alert', 'update_alert', 'delete_alert',
-  'create_notification_channel',
-];
-
 export interface SigNozMcp {
   raw: StructuredToolInterface[];
-  read: Record<string, StructuredToolInterface>;
-  write: Record<string, StructuredToolInterface>;
   /** invoke a tool by its base name (e.g. "list_metrics") and JSON-parse the result */
   call<T = unknown>(baseName: string, args: Record<string, unknown>): Promise<T>;
-  /** call a tool through the raw MCP client, bypassing the adapter's client-side zod (which throws a
-   * detail-free "did not match expected schema"). The server returns the AUTHORITATIVE, detailed error. */
-  callRaw: (toolName: string, args: Record<string, unknown>) => Promise<string>;
   toolNames: string[];
   /** MCP resources — the canonical signoz://… docs (dashboard/alert/promql instructions & examples) */
   listResources: () => Promise<unknown>;
@@ -40,15 +24,6 @@ export interface SigNozMcp {
 /** match a loaded tool by base name regardless of any server prefix the adapter adds */
 function findByBase(tools: StructuredToolInterface[], base: string): StructuredToolInterface | undefined {
   return tools.find((t) => t.name === base || t.name.endsWith(base) || t.name.endsWith(`signoz_${base}`) || t.name.includes(base));
-}
-
-function pick(tools: StructuredToolInterface[], bases: string[]): Record<string, StructuredToolInterface> {
-  const out: Record<string, StructuredToolInterface> = {};
-  for (const b of bases) {
-    const t = findByBase(tools, b);
-    if (t) out[b] = t;
-  }
-  return out;
 }
 
 export async function connectSigNoz(opts?: { url?: string; apiKey?: string }): Promise<SigNozMcp> {
@@ -66,8 +41,6 @@ export async function connectSigNoz(opts?: { url?: string; apiKey?: string }): P
   });
 
   const raw = await client.getTools();
-  const read = pick(raw, READ_TOOLS);
-  const write = pick(raw, WRITE_TOOLS);
 
   const call = <T = unknown>(baseName: string, args: Record<string, unknown>): Promise<T> =>
     withSpan(`signoz.tool ${baseName}`, { 'otto.kind': 'mcp', 'otto.tool': baseName }, async () => {
@@ -97,19 +70,11 @@ export async function connectSigNoz(opts?: { url?: string; apiKey?: string }): P
   });
 
   const SERVER = 'signoz';
-  const callRaw = async (toolName: string, args: Record<string, unknown>): Promise<string> => {
-    const c = (await client.getClient(SERVER)) as { callTool: (p: { name: string; arguments: Record<string, unknown> }) => Promise<{ content?: { text?: string }[]; isError?: boolean }> } | undefined;
-    if (!c) throw new Error('MCP client unavailable');
-    const res = await c.callTool({ name: toolName, arguments: args });
-    const text = Array.isArray(res?.content) ? res.content.map((x) => x?.text ?? '').join('\n') : JSON.stringify(res);
-    if (res?.isError) throw new Error(text || 'tool returned an error');
-    return text;
-  };
   const listResources = () => client.listResources(SERVER);
   const readResource = (uri: string) => client.readResource(SERVER, uri);
   const getPromptClient = async () => (await client.getClient(SERVER)) as { listPrompts?: () => Promise<unknown>; getPrompt?: (a: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown> } | undefined;
   const listPrompts = async () => { const c = await getPromptClient(); return c?.listPrompts ? c.listPrompts() : { prompts: [] }; };
   const getPrompt = async (name: string, args?: Record<string, unknown>) => { const c = await getPromptClient(); return c?.getPrompt ? c.getPrompt({ name, arguments: args }) : { error: 'prompts not supported' }; };
 
-  return { raw, read, write, call, callRaw, toolNames: raw.map((t) => t.name), listResources, readResource, listPrompts, getPrompt, close: () => client.close() };
+  return { raw, call, toolNames: raw.map((t) => t.name), listResources, readResource, listPrompts, getPrompt, close: () => client.close() };
 }

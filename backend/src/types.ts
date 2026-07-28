@@ -25,7 +25,8 @@ export interface PanelSpec {
 }
 
 // ---- Neutral SigNoz builder model (shape-agnostic) ---------------------
-// Serialized two ways: toQueryApi() for validation, toWidget() for storage.
+// Produced by mapper/promql.ts; the engine serializes it into Query-Builder
+// widgets inline (see engine/fullmigrate.ts wrapWidget).
 
 export type TimeAgg =
   | 'rate'

@@ -28,3 +28,6 @@ SUBMISSION-READINESS.md
 
 # stray scratch dumps from agent/migration testing
 ._*.json
+
+# build artifacts
+*.tsbuildinfo
