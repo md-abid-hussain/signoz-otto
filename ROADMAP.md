@@ -11,8 +11,13 @@
 |---|---|---|
 | **Cleanup** | dead code removed, vulns patched (backend 7→0), docs | ✅ done (`480da53`) |
 | **P0 — OTel done right** | logs, exceptions, inbound-APM spans, service.namespace grouping, unified LLM token metric | ✅ done + verified live (`9ea6543`) |
-| **P1 — Feature integrity** | readiness reliability; SLO choose/edit-before-create | ⏭️ next |
-| **P2 — Agent + modularity** | slim the agent prompt; extract shared dashboard builder; targeted tests | ⏳ planned |
+| **P1 — Feature integrity** | readiness reliability (`49347f6`); SLO choose/edit-before-create (`4666d1f`) | ✅ done + verified live |
+| **P2 — Agent + modularity** | slim the agent prompt; extract shared dashboard builder; targeted tests | ⏭️ next |
+
+> P1 results: readiness false-"missing" 34→1 on the OTel Collector dashboard (migration 42/45); SLO
+> now creates the human's edited target (verified: applied 95%/1500ms/7d over a 99.5%/2000ms/30d heuristic).
+> Deferred sub-item: **group-by field-context** verification (the silent-null check) — separate from the
+> metric-name reliability fix that P1.1 landed.
 
 ### P1 — Feature integrity (make each surface trustworthy)
 1. **Readiness reliability** ([readiness/index.ts](backend/src/readiness/index.ts)) — today it *samples* the
