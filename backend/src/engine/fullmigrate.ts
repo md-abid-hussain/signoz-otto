@@ -11,6 +11,7 @@ import { migrateDashboard, applyDashboard, buildSigNozVariables, type PanelMigra
 import { agentTranslatePanel, type AgentQuery, type AgentResult } from '../agent/translate.js';
 import { agentMatchMetrics } from '../agent/match.js';
 import { fetchInstanceMetrics } from '../readiness/index.js';
+import { builderWidget } from '../signoz/dashboard.js';
 import { withSpan, recordPanel, recordLlm, recordRunDuration, annotateSpan } from '../otel/index.js';
 
 const LLM_MODEL = process.env.LLM_MODEL ?? 'gpt-5.6-terra';
@@ -114,12 +115,7 @@ function widgetFromAgent(panel: PanelSpec, a: AgentResult): Record<string, unkno
 }
 
 function wrapWidget(panelId: string, title: string, panelTypes: string, queryData: unknown[], queryFormulas: unknown[], yAxisUnit = 'none'): Record<string, unknown> {
-  return {
-    id: `otto-${panelId}`, title, description: '', panelTypes,
-    nullZeroValues: 'zero', opacity: '1', timePreferance: 'GLOBAL_TIME', yAxisUnit,
-    selectedLogFields: [], selectedTracesFields: [], thresholds: [], contextLinks: { linksData: [] },
-    query: { id: `q-${panelId}`, queryType: 'builder', promql: [], clickhouse_sql: [], builder: { queryData, queryFormulas } },
-  };
+  return builderWidget({ id: `otto-${panelId}`, queryId: `q-${panelId}`, title, panelTypes, queryData, queryFormulas, yAxisUnit });
 }
 
 function layoutFor(p: PanelSpec): Record<string, unknown> {

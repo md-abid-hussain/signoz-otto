@@ -4,6 +4,8 @@
 // of the run you just watched. Trace-based panels use the confirmed otto.run/panel.migrate spans;
 // count/spend panels use the otto.* metrics.
 
+import { builderWidget, rowWidget } from '../signoz/dashboard.js';
+
 const NS = 'none';
 
 /** metrics builder-widget query (dashboard shape) */
@@ -29,22 +31,10 @@ function traceQ(name: string, agg: string, filter: string, groupBy: string[], le
   };
 }
 
-function widget(id: string, title: string, panelTypes: string, queryData: unknown[], yAxisUnit = NS): Record<string, unknown> {
-  return {
-    id, title, description: '', panelTypes, nullZeroValues: 'zero', opacity: '1',
-    timePreferance: 'GLOBAL_TIME', yAxisUnit, selectedLogFields: [], selectedTracesFields: [],
-    thresholds: [], contextLinks: { linksData: [] },
-    query: { id: `q-${id}`, queryType: 'builder', promql: [], clickhouse_sql: [], builder: { queryData, queryFormulas: [] } },
-  };
-}
+const widget = (id: string, title: string, panelTypes: string, queryData: unknown[], yAxisUnit = NS): Record<string, unknown> =>
+  builderWidget({ id, title, panelTypes, queryData, yAxisUnit });
 
-function row(id: string, title: string): Record<string, unknown> {
-  return {
-    id, panelTypes: 'row', title, description: '',
-    query: { queryType: 'builder', promql: [], clickhouse_sql: [], builder: { queryData: [], queryFormulas: [] } },
-    selectedLogFields: [], selectedTracesFields: [], thresholds: [], contextLinks: { linksData: [] },
-  };
-}
+const row = (id: string, title: string): Record<string, unknown> => rowWidget(id, title);
 
 const uid = (fallback: string) => globalThis.crypto?.randomUUID?.() ?? fallback;
 

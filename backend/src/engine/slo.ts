@@ -5,6 +5,7 @@
 import { ChatOpenAI } from '@langchain/openai';
 import type { SigNozMcp } from '../signoz/mcp.js';
 import type { SloEvidence, SloProposal, SloAnalysis } from '../types.js';
+import { builderWidget } from '../signoz/dashboard.js';
 
 /** pull the single scalar out of an aggregate_traces result (envelope-agnostic) */
 function scalar(res: unknown): number {
@@ -185,12 +186,8 @@ export function buildSloDashboard(p: SloProposal): Record<string, unknown> {
     queryName: 'F1', expression: expr, dataSource: 'traces', stepInterval: 60,
     aggregations: [], groupBy: [], orderBy: [], selectColumns: [], functions: [], legend, reduceTo: 'avg', disabled: false,
   });
-  const widget = (id: string, title: string, panelTypes: string, queryData: unknown[], queryFormulas: unknown[], yAxisUnit: string, thresholds: unknown[] = []) => ({
-    id, title, description: '', panelTypes, nullZeroValues: 'zero', opacity: '1',
-    timePreferance: 'GLOBAL_TIME', yAxisUnit, selectedLogFields: [], selectedTracesFields: [],
-    thresholds, contextLinks: { linksData: [] },
-    query: { id: `q-${id}`, queryType: 'builder', promql: [], clickhouse_sql: [], builder: { queryData, queryFormulas } },
-  });
+  const widget = (id: string, title: string, panelTypes: string, queryData: unknown[], queryFormulas: unknown[], yAxisUnit: string, thresholds: unknown[] = []) =>
+    builderWidget({ id, title, panelTypes, queryData, queryFormulas, yAxisUnit, thresholds });
   const O = p.objectivePct;
   return {
     title: `SLO — ${p.service} / ${p.operation} (${O}% < ${p.latencyThresholdMs}ms / ${p.windowDays}d)`,
