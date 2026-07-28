@@ -1,9 +1,47 @@
-# Otto — Roadmap & Cleanup Plan (`after-hack` branch)
+# Otto — Roadmap (`after-hack` branch)
 
 > Goal: take the hackathon build to a **simpler, concrete, correct** version — cut dead code,
-> collapse superseded paths, patch security advisories — without losing any working feature.
-> Grounded in the original intent ([v2/PRODUCT.md](v2/PRODUCT.md), [v2/TECH.md](v2/TECH.md)) and the
-> code as it actually shipped.
+> patch security advisories, and make each feature (and the self-observability) actually reliable —
+> without losing any working feature. Grounded in the original intent
+> ([v2/PRODUCT.md](v2/PRODUCT.md), [v2/TECH.md](v2/TECH.md)) and the code as it actually shipped.
+
+## Status at a glance
+
+| Phase | Scope | State |
+|---|---|---|
+| **Cleanup** | dead code removed, vulns patched (backend 7→0), docs | ✅ done (`480da53`) |
+| **P0 — OTel done right** | logs, exceptions, inbound-APM spans, service.namespace grouping, unified LLM token metric | ✅ done + verified live (`9ea6543`) |
+| **P1 — Feature integrity** | readiness reliability; SLO choose/edit-before-create | ⏭️ next |
+| **P2 — Agent + modularity** | slim the agent prompt; extract shared dashboard builder; targeted tests | ⏳ planned |
+
+### P1 — Feature integrity (make each surface trustworthy)
+1. **Readiness reliability** ([readiness/index.ts](backend/src/readiness/index.ts)) — today it *samples* the
+   instance metric list via fixed search stems + `limit:200`, so real metrics can be false-flagged
+   "missing", and it never checks group-by fields, **field-context** (the silent-null trap), or executes
+   the query. Fix: resolve each dependency with a **targeted** `list_metrics(searchText=metric)`; verify
+   group-by keys + context via `get_field_keys`; optional dry-run `execute_builder_query` to catch
+   silent-nulls. Makes "readiness" mean what the product claims, for arbitrary/other-service dashboards.
+2. **SLO: choose or edit before create** ([slo.ts](backend/src/engine/slo.ts) +
+   [Slo.tsx](frontend/src/surfaces/Slo.tsx)) — the agent shows `alternatives` but only the single heuristic
+   proposal is buildable, and apply sends just `{service, operation}`. Fix: make alternatives **selectable**
+   and add numeric inputs for objective%/threshold/window that flow into apply (`buildSloDashboard`/
+   `buildSloAlert` already take a `proposal`). Closes the biggest UX gap.
+
+### P2 — Agent simplification + modularity (keep HITL exactly as-is)
+3. **Slim the agent prompt** ([askact.ts](backend/src/agent/askact.ts)) — cut the prescriptive scaffolding to
+   a tight operating contract (discovery-first, "call don't narrate", self-correct-on-error); let deepagents'
+   planner/loop do the work. `interruptOn`/HITL unchanged.
+4. **Extract a shared dashboard builder** — the widget/JSON building is duplicated across
+   `fullmigrate.ts`, `slo.ts`, `opsdash.ts`; factor a small `signoz/dashboard.ts` and unit-test it.
+
+### Cross-cutting — testing
+5. Unit-test the readiness resolver (targeted lookups, field-context), the SLO proposal/edit math, and the
+   shared builder. Keep vitest; no live-SigNoz dependency in unit tests.
+
+**Out of scope** (SigNoz-platform features, not Otto's job): incident tracking, end-to-end infra
+monitoring, full SLA/SLO-management suites. Approval gates stay the product.
+
+---
 
 ## Where the code diverged from the v2 design (why there's cruft)
 
